@@ -23,18 +23,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK Packages
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          yes | sdkmanager --licenses || true
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
+      - name: Accept Licenses
+        run: yes | sdkmanager --licenses || true
+
       - name: Locate Project
         id: project
+        shell: bash
         run: |
           FILE=$(find . -type f \( \
             -name settings.gradle.kts -o \
