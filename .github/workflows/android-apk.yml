@@ -4,20 +4,23 @@ name: Build Prime VPN APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -26,34 +29,60 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Locate Gradle Project
-        id: project
+      - name: Install SDK Packages
         run: |
-          FILE=$(find . -name settings.gradle.kts -o -name settings.gradle | head -n 1)
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Accept SDK Licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Locate Android Project
+        id: locate
+        shell: bash
+        run: |
+          FILE=$(find . \
+            -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -not -path "*/.gradle/*" \
+            | head -n 1)
+
           if [ -z "$FILE" ]; then
-            echo "ERROR: Gradle project files are missing!"
-            find . -maxdepth 4 -type f | head -100
+            echo "ERROR: Gradle project not found!"
+            echo "Repository files:"
+            find . -maxdepth 4 -type f | head -150
             exit 1
           fi
-          DIR=$(dirname "$FILE")
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-          echo "Found project at: $DIR"
+
+          PROJECT_DIR=$(dirname "$FILE")
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Project found: $PROJECT_DIR"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build APK
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: gradle --no-daemon assembleDebug
+      - name: Build Debug APK
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: |
+          gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK
+        run: |
+          APK="${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "APK NOT FOUND!"
+            find . -type f -name "*.apk"
+            exit 1
+          fi
+          ls -lh "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Prime-VPN-APK
-          path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
