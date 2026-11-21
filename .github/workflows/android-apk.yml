@@ -4,16 +4,13 @@ name: Prime VPN APK Build
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build Prime VPN
     runs-on: ubuntu-latest
 
     steps:
@@ -31,60 +28,79 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Accept Android SDK Licenses
-        run: |
-          yes | sdkmanager --licenses || true
+      - name: Accept SDK Licenses
+        run: yes | sdkmanager --licenses || true
 
-      - name: Verify Android SDK
+      - name: Find and Extract Project ZIP
+        id: extract
+        shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager --list_installed
+          ZIP_FILE=$(find . -maxdepth 3 -type f -name "*.zip" | head -n 1)
 
-      - name: Locate Gradle Project
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Project ZIP not found!"
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+          mkdir -p extracted_project
+          unzip -oq "$ZIP_FILE" -d extracted_project
+
+          echo "ZIP extracted successfully."
+          find extracted_project -maxdepth 4 -type f | head -100
+
+      - name: Locate Android Project
         id: locate
         shell: bash
         run: |
-          FILE=$(find . -type f \
+          FILE=$(find extracted_project -type f \
             \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
-            -not -path "*/.gradle/*" \
             | head -n 1)
 
           if [ -z "$FILE" ]; then
-            echo "ERROR: Gradle project not found."
-            find . -maxdepth 5 -type f | head -150
+            echo "ERROR: ZIP does not contain a Gradle project!"
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$FILE")
+
+          if [ ! -d "$PROJECT_DIR/app" ]; then
+            echo "ERROR: app folder missing in project!"
+            exit 1
+          fi
+
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Found project: $PROJECT_DIR"
+          echo "Project found: $PROJECT_DIR"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build Debug APK
+      - name: Build APK
         working-directory: ${{ steps.locate.outputs.dir }}
-        run: |
-          gradle --no-daemon --stacktrace assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug
 
-      - name: Verify APK
+      - name: Find APK
+        id: apk
+        shell: bash
         run: |
-          APK="${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk"
+          APK=$(find "${{ steps.locate.outputs.dir }}" \
+            -type f -path "*/build/outputs/apk/debug/*.apk" \
+            | head -n 1)
 
-          if [ ! -f "$APK" ]; then
-            echo "APK was not generated."
-            find . -type f -name "*.apk"
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated!"
             exit 1
           fi
 
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
           ls -lh "$APK"
 
-      - name: Upload Prime VPN APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Prime-VPN-APK
-          path: ${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
           retention-days: 7
