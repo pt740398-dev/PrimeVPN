@@ -3,9 +3,7 @@ name: Build Prime VPN APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -35,62 +33,73 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Locate or Extract Android Project
+      - name: Locate Android Project
         shell: bash
         run: |
           set -e
 
           PROJECT_FILE=$(find "$GITHUB_WORKSPACE" \
-            -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            -not -path "*/.git/*" \
-            -not -path "*/.gradle/*" \
-            -print -quit)
+            -type f \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -not -path '*/.git/*' \
+            -not -path '*/.gradle/*' -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "Gradle project not found. Searching ZIP files..."
-
             mkdir -p "$GITHUB_WORKSPACE/.primevpn-source"
 
             while IFS= read -r ZIP_FILE; do
-              echo "Extracting: $ZIP_FILE"
               unzip -oq "$ZIP_FILE" -d "$GITHUB_WORKSPACE/.primevpn-source"
-            done < <(find "$GITHUB_WORKSPACE" \
-              -maxdepth 3 -type f -iname "*.zip" \
-              -not -path "*/.git/*")
+            done < <(find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -iname '*.zip')
 
             PROJECT_FILE=$(find "$GITHUB_WORKSPACE/.primevpn-source" \
-              -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-              -not -path "*/.gradle/*" \
-              -print -quit)
+              -type f \( -name settings.gradle -o -name settings.gradle.kts \) \
+              -not -path '*/.gradle/*' -print -quit)
           fi
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: No Gradle project found."
-            echo "Repository files:"
-            find "$GITHUB_WORKSPACE" -maxdepth 4 -type f | head -100
+            echo "ERROR: Gradle project not found."
+            find "$GITHUB_WORKSPACE" -maxdepth 5 -type f | head -150
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
-          echo "Found Android project: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project found: $PROJECT_DIR"
 
       - name: Build Debug APK
-        shell: bash
         run: |
           set -e
           cd "$PROJECT_DIR"
 
-          if [ -f "./gradlew" ]; then
+          if [ -f ./gradlew ]; then
             chmod +x ./gradlew
             ./gradlew --no-daemon assembleDebug
           else
             gradle --no-daemon assembleDebug
           fi
 
+      - name: Find APK
+        id: find_apk
+        shell: bash
+        run: |
+          set -e
+
+          APK=$(find "$PROJECT_DIR" -type f \
+            -path '*/build/outputs/apk/*' \
+            -name '*.apk' -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: Build finished but APK was not found."
+            echo "Checking build output folders:"
+            find "$PROJECT_DIR" -type d -path '*/build/outputs/*' -print
+            exit 1
+          fi
+
+          echo "APK found: $APK"
+          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+
       - name: Upload Prime VPN APK
         uses: actions/upload-artifact@v4
         with:
           name: Prime-VPN-APK
-          path: '**/build/outputs/apk/**/*.apk'
+          path: ${{ steps.find_apk.outputs.apk_path }}
           if-no-files-found: error
